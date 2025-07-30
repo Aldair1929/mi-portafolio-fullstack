@@ -94,30 +94,35 @@
         <div class="card-body">
           <p class="mb-4">Si quieres contactarme, por favor completa el siguiente formulario:</p>
 
-          <form class="row g-3" id="contacto-form" novalidate>
+          <form class="row g-3" id="contacto-form" novalidate method="post">
             <div class="col-md-6">
               <label for="nombre" class="form-label">Nombre</label>
               <input type="text" class="form-control" id="nombre" required>
+              <div class="error" id="errorN"></div>
             </div>
 
             <div class="col-md-6">
               <label for="apellido" class="form-label">Apellido</label>
               <input type="text" class="form-control" id="apellido" required>
+              <div class="error" id="errorA"></div>
             </div>
 
             <div class="col-12">
               <label for="email" class="form-label">Email</label>
               <input type="email" class="form-control" id="email" required>
+              <div class="error" id="errorE"></div>
             </div>
 
             <div class="col-md-6">
               <label for="tel" class="form-label">Teléfono</label>
               <input type="tel" class="form-control" id="tel" required>
+              <div class="error" id="errorT"></div>
             </div>
 
             <div class="col-md-6">
               <label for="ciudad" class="form-label">Ciudad</label>
               <input type="text" class="form-control" id="ciudad" required>
+              <div class="error" id="errorC"></div>
             </div>
 
             <div class="col-12 text-center">
