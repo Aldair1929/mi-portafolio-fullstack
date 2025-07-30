@@ -94,48 +94,100 @@
         <div class="card-body">
           <p class="mb-4">Si quieres contactarme, por favor completa el siguiente formulario:</p>
 
-          <form class="row g-3" id="contacto-form" novalidate method="post" action="php/email.php" enctype="multipart/form-data">
-            <div class="col-md-6">
-              <label for="nombre" class="form-label">Nombre</label>
-              <input type="text" class="form-control" id="nombre" name="nombre" required>
-              <div class="error" id="errorN"></div>
-            </div>
+          <div id="mensaje" class="alert d-done" role="alert"></div>
 
-            <div class="col-md-6">
-              <label for="apellido" class="form-label">Apellido</label>
-              <input type="text" class="form-control" id="apellido" name="apellido" required>
-              <div class="error" id="errorA"></div>
-            </div>
+            <form class="row g-3" id="contacto-form" novalidate method="post" action="php/enviar.php" enctype="multipart/form-data">
+              <div class="col-md-6">
+                <label for="nombre" class="form-label">Nombre</label>
+                <input type="text" class="form-control" id="nombre" name="nombre" required>
+                <div class="error" id="errorN"></div>
+              </div>
 
-            <div class="col-12">
-              <label for="email" class="form-label">Email</label>
-              <input type="email" class="form-control" id="email" name="email" required>
-              <div class="error" id="errorE"></div>
-            </div>
+              <div class="col-md-6">
+                <label for="apellido" class="form-label">Apellido</label>
+                <input type="text" class="form-control" id="apellido" name="apellido" required>
+                <div class="error" id="errorA"></div>
+              </div>
 
-            <div class="col-md-6">
-              <label for="tel" class="form-label">Teléfono</label>
-              <input type="tel" class="form-control" id="tel" name="tel" required>
-              <div class="error" id="errorT"></div>
-            </div>
+              <div class="col-12">
+                <label for="email" class="form-label">Email</label>
+                <input type="email" class="form-control" id="email" name="email" required>
+                <div class="error" id="errorE"></div>
+              </div>
 
-            <div class="col-md-6">
-              <label for="ciudad" class="form-label">Ciudad</label>
-              <input type="text" class="form-control" id="ciudad" name="ciudad"  required>
-              <div class="error" id="errorC"></div>
-            </div>
+              <div class="col-md-6">
+                <label for="tel" class="form-label">Teléfono</label>
+                <input type="tel" class="form-control" id="tel" name="tel" required>
+                <div class="error" id="errorT"></div>
+              </div>
 
-            <div class="col-12 text-center">
-              <button type="submit" class="btn btn-primary mt-2">Enviar</button>
-            </div>
+              <div class="col-md-6">
+                <label for="ciudad" class="form-label">Ciudad</label>
+                <input type="text" class="form-control" id="ciudad" name="ciudad"  required>
+                <div class="error" id="errorC"></div>
+              </div>
+
+              <div class="col-12 text-center">
+                <button type="submit" class="btn btn-primary mt-2">Enviar</button>
+              </div>
           </form>
         </div>
-
       </div>
     </div>
   </div>
 </section>
 
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.getElementById('contacto-form');
+  const msg  = document.getElementById('mensaje');
+  const btn  = document.getElementById('btn-enviar');
+
+  if (!form || !btn || !msg) return;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();                    // evita navegar a php/enviar.php
+    if (btn.disabled) return;             // evita doble click/doble envío
+
+    // estado "enviando"
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+    msg.className = 'alert d-none';
+    msg.textContent = '';
+
+    try {
+      const data = new FormData(form);
+      const res  = await fetch(form.action, {
+        method: 'POST',
+        body: data,
+        headers: { 'Accept': '' }
+      });
+
+      let payload;
+      try { payload = await res.json(); }
+      catch { payload = { ok:false, errors:['Respuesta no válida del servidor'] }; }
+
+      if (res.ok && payload.ok) {
+        msg.className = 'alert alert-success';
+        msg.textContent = payload.message || '¡Enviado con éxito! Gracias por contactarme.';
+        form.reset(); // limpia el formulario
+      } else {
+        msg.className = 'alert alert-danger';
+        const errs = payload.errors || ['Hubo un error al enviar.'];
+        msg.textContent = errs.join(' ');
+      }
+    } catch (err) {
+      msg.className = 'alert alert-danger';
+      msg.textContent = 'Error de red o servidor. Intenta nuevamente.';
+    } finally {
+      msg.classList.remove('d-none');
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+});
+</script>
 
 
 <footer class="text-center py-4">

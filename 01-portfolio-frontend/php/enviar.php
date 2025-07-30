@@ -5,19 +5,17 @@ use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 use Dotenv\Dotenv;
 
-require __DIR__ . '/vendor/autoload.php';
+require __DIR__ . '/../vendor/autoload.php';
 
-// Cargar .env
-$dotenv = Dotenv::createImmutable(__DIR__);
-$dotenv->safeLoad();
-
+// Cargar .env (está en 01-portfolio-frontend/.env)
+$dotenv = Dotenv::createImmutable(__DIR__ . '/../');
+$dotenv->load();
 
 $env = static function (string $key, $default = null) {
-    // Prioriza $_ENV (phpdotenv) y cae a getenv() si hiciera falta
     return $_ENV[$key] ?? getenv($key) ?? $default;
 };
 
-// Requeridas para SMTP/correos
+// Validar variables obligatorias
 $requiredEnv = [
     'SMTP_HOST','SMTP_PORT','SMTP_USER','SMTP_PASS',
     'MAIL_FROM_NAME','MAIL_FROM_ADDR','MAIL_TO_ADDR'
@@ -25,41 +23,40 @@ $requiredEnv = [
 $missing = array_filter($requiredEnv, fn($k) => empty($env($k)));
 if ($missing) {
     http_response_code(500);
-    echo "Faltan variables de entorno: " . implode(', ', $missing);
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode([
+        'ok' => false,
+        'errors' => ['Faltan variables de entorno: ' . implode(', ', $missing)]
+    ], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 // Config SMTP/Correo
-$SMTP_HOST = (string)$env('SMTP_HOST');
-$SMTP_PORT = (int)$env('SMTP_PORT');
-$SMTP_USER = (string)$env('SMTP_USER');
-$SMTP_PASS = (string)$env('SMTP_PASS');
+$SMTP_HOST          = (string)$env('SMTP_HOST');
+$SMTP_PORT          = (int)$env('SMTP_PORT');
+$SMTP_USER          = (string)$env('SMTP_USER');
+$SMTP_PASS          = (string)$env('SMTP_PASS');
+$MAIL_FROM_NAME     = (string)$env('MAIL_FROM_NAME');
+$MAIL_FROM_ADDR     = (string)$env('MAIL_FROM_ADDR');
+$MAIL_TO_ADDR       = (string)$env('MAIL_TO_ADDR');
+$MAX_ATTACH_BYTES   = (int)$env('MAX_ATTACH_BYTES', 2097152);
 
-$MAIL_FROM_NAME = (string)$env('MAIL_FROM_NAME');
-$MAIL_FROM_ADDR = (string)$env('MAIL_FROM_ADDR');
-$MAIL_TO_ADDR   = (string)$env('MAIL_TO_ADDR');
-
-$MAIL_SEND_AUTOREPLY = filter_var($env('MAIL_SEND_AUTOREPLY', 'true'), FILTER_VALIDATE_BOOLEAN);
-$MAX_ATTACH_BYTES    = (int)$env('MAX_ATTACH_BYTES', 2097152); // 2 MB por defecto
-
-// Asegura que el remitente sea la misma cuenta autenticada (recomendado por Gmail/DMARC)
+// Forzar remitente == usuario autenticado (recomendado por Gmail/DMARC)
 $MAIL_FROM_ADDR = $SMTP_USER;
 
-/* ─────────────────────────────────────────────────────────────
-1) Aceptar solo POST
-   ───────────────────────────────────────────────────────────── */
+// Aceptar solo POST
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
-    header('Location: index.php');
+    http_response_code(405);
+    header('Allow: POST');
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode(['ok' => false, 'errors' => ['Método no permitido']], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-/* ─────────────────────────────────────────────────────────────
-2) Sanitizar y validar datos
-   ───────────────────────────────────────────────────────────── */
-function s(string $v): string {
-    return htmlspecialchars(trim($v), ENT_QUOTES, 'UTF-8');
-}
+// Sanitizar helper
+function s(string $v): string { return htmlspecialchars(trim($v), ENT_QUOTES, 'UTF-8'); }
 
+// Datos
 $nombre   = s($_POST['nombre']   ?? '');
 $apellido = s($_POST['apellido'] ?? '');
 $correo   = s($_POST['email']    ?? '');
@@ -68,29 +65,16 @@ $ciudad   = s($_POST['ciudad']   ?? '');
 $mensaje  = s($_POST['mensaje']  ?? '');
 
 $errores = [];
-
-// Regex: letras (incluye tildes/ñ), espacios, apóstrofe y guion, 2–50 chars
 $reTexto = '/^[\p{L}\s\'-]{2,50}$/u';
 
 // Validaciones
-if (mb_strlen($nombre) < 2 || !preg_match($reTexto, $nombre)) {
-    $errores[] = 'Nombre inválido.';
-}
-if (mb_strlen($apellido) < 2 || !preg_match($reTexto, $apellido)) {
-    $errores[] = 'Apellido inválido.';
-}
-if (!filter_var($correo, FILTER_VALIDATE_EMAIL)) {
-    $errores[] = 'Correo inválido.';
-}
-// Ecuador: 09 + 8 dígitos o +5939 + 8 dígitos
-if (!preg_match('/^(?:09\d{8}|\+5939\d{8})$/', $telefono)) {
-    $errores[] = 'Teléfono inválido (use 09######## o +5939########).';
-}
-if (mb_strlen($ciudad) < 2 || !preg_match($reTexto, $ciudad)) {
-    $errores[] = 'Ciudad inválida.';
-}
+if (mb_strlen($nombre) < 2 || !preg_match($reTexto, $nombre))       $errores[] = 'Nombre inválido.';
+if (mb_strlen($apellido) < 2 || !preg_match($reTexto, $apellido))   $errores[] = 'Apellido inválido.';
+if (!filter_var($correo, FILTER_VALIDATE_EMAIL))                     $errores[] = 'Correo inválido.';
+if (!preg_match('/^(?:09\d{8}|\+5939\d{8})$/', $telefono))          $errores[] = 'Teléfono inválido (use 09######## o +5939########).';
+if (mb_strlen($ciudad) < 2 || !preg_match($reTexto, $ciudad))        $errores[] = 'Ciudad inválida.';
 
-/* Adjuntos (opcional) */
+// Adjuntos (opcional)
 $adjuntoOk = true;
 if (!empty($_FILES['documento']['name'])) {
     if (!is_uploaded_file($_FILES['documento']['tmp_name'])) {
@@ -102,138 +86,75 @@ if (!empty($_FILES['documento']['name'])) {
             $errores[] = 'Adjunto supera el tamaño permitido.';
             $adjuntoOk = false;
         }
-        // Extensiones permitidas
         $allowedExt = ['pdf','jpg','jpeg','png','doc','docx'];
         $ext = strtolower(pathinfo($_FILES['documento']['name'], PATHINFO_EXTENSION));
         if (!in_array($ext, $allowedExt, true)) {
             $errores[] = 'Tipo de archivo no permitido.';
             $adjuntoOk = false;
         }
-        // (Opcional) Validación por MIME real
-        if (function_exists('mime_content_type') && $adjuntoOk) {
-            $allowedMime = [
-                'application/pdf', 'image/jpeg', 'image/png',
-                'application/msword',
-                'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-            ];
-            $mime = mime_content_type($_FILES['documento']['tmp_name']);
-            if ($mime !== false && !in_array($mime, $allowedMime, true)) {
-                $errores[] = 'Tipo MIME del adjunto no permitido.';
-                $adjuntoOk = false;
-            }
-        }
     }
 }
 
-// Si hay errores, responder
 if ($errores) {
     http_response_code(422);
-    echo '<h3>Errores en el formulario:</h3><ul>';
-    foreach ($errores as $e) {
-        echo '<li>' . $e . '</li>';
-    }
-    echo '</ul><a href="index.php">Volver</a>';
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode(['ok' => false, 'errors' => $errores], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-/* ─────────────────────────────────────────────────────────────
-3) Cuerpos de correo (HTML + texto)
-   ───────────────────────────────────────────────────────────── */
-// Correo para TI (admin)
-$asuntoAdmin = 'Nuevo contacto desde el portafolio';
-$bodyAdminHTML = "
-<h2>Nuevo mensaje de contacto</h2>
-<p><strong>Nombre:</strong> {$nombre} {$apellido}</p>
-<p><strong>Email:</strong> {$correo}</p>
-<p><strong>Teléfono:</strong> {$telefono}</p>
-<p><strong>Ciudad:</strong> {$ciudad}</p>" .
-($mensaje ? "<p><strong>Mensaje:</strong><br>" . nl2br($mensaje) . "</p>" : '');
-
-$bodyAdminTXT = "Nuevo mensaje de contacto\n"
-. "Nombre: {$nombre} {$apellido}\n"
-. "Email: {$correo}\n"
-. "Teléfono: {$telefono}\n"
-. "Ciudad: {$ciudad}\n"
-. ($mensaje ? "Mensaje:\n{$mensaje}\n" : "");
-
-// Auto‑reply para el usuario
-$asuntoUser = 'Gracias por contactarme, ' . $nombre;
-$bodyUserHTML = "
-<h2>¡Hola {$nombre}!</h2>
-<p>Gracias por tu mensaje. Te responderé a la brevedad.</p>
-<p><strong>Resumen que enviaste:</strong></p>
-<ul>
-    <li>Nombre: {$nombre} {$apellido}</li>
-    <li>Email: {$correo}</li>
-    <li>Teléfono: {$telefono}</li>
-    <li>Ciudad: {$ciudad}</li>
-</ul>" .
-($mensaje ? "<p><strong>Mensaje:</strong><br>" . nl2br($mensaje) . "</p>" : '') .
-"<p>Saludos,<br>{$MAIL_FROM_NAME}</p>";
-
-$bodyUserTXT = "Hola {$nombre}!\n\nGracias por tu mensaje. Te responderé pronto.\n\n"
-. "Resumen:\nNombre: {$nombre} {$apellido}\nEmail: {$correo}\nTeléfono: {$telefono}\nCiudad: {$ciudad}\n"
-. ($mensaje ? "Mensaje:\n{$mensaje}\n" : "")
-. "\nSaludos,\n{$MAIL_FROM_NAME}";
-
-/* ─────────────────────────────────────────────────────────────
-4) Envío con PHPMailer (1) a ti + (2) auto‑reply al usuario
-   ───────────────────────────────────────────────────────────── */
+// Envío (UN SOLO correo al usuario + BCC para ti)
 $mail = new PHPMailer(true);
 
 try {
-    // DEBUG (solo en desarrollo):
-    // $mail->SMTPDebug = 2;            // 0=off, 2=info, 3/4=verbose
-    // $mail->Debugoutput = 'html';
+    // $mail->SMTPDebug = 2; $mail->Debugoutput = 'html'; // activar solo para depurar
 
-    // Config SMTP
     $mail->isSMTP();
     $mail->Host       = $SMTP_HOST;
     $mail->SMTPAuth   = true;
     $mail->Username   = $SMTP_USER;
-    $mail->Password   = $SMTP_PASS;        // App Password de Gmail si usas Gmail
-    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS; // o PHPMailer::ENCRYPTION_SMTPS (465)
+    $mail->Password   = $SMTP_PASS;
+    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS; // o ENCRYPTION_SMTPS (465)
     $mail->Port       = $SMTP_PORT;
     $mail->CharSet    = 'UTF-8';
 
-    /* 1) A TI (admin) */
-    $mail->setFrom($MAIL_FROM_ADDR, $MAIL_FROM_NAME); // Remitente autenticado
-    $mail->addAddress($correo, $nombre . ' ' . $apellido); // usuario
-    $mail->addBCC($MAIL_TO_ADDR); // copia oculta a tu correo
+    // Remitente autenticado
+    $mail->setFrom($MAIL_FROM_ADDR, $MAIL_FROM_NAME);
 
+    // Destinatario principal: el usuario
+    $mail->addAddress($correo, $nombre . ' ' . $apellido);
 
+    // Copia oculta para ti (registro)
+    $mail->addBCC($MAIL_TO_ADDR);
+
+    // reply-to al usuario
     if ($correo) {
-        $mail->addReplyTo($correo, $nombre . ' ' . $apellido); // Responder al usuario
+        $mail->addReplyTo($correo, $nombre . ' ' . $apellido);
     }
 
+    // adjunto opcional
     if ($adjuntoOk && !empty($_FILES['documento']['name'])) {
         $mail->addAttachment($_FILES['documento']['tmp_name'], $_FILES['documento']['name']);
     }
 
+    // contenido
     $mail->isHTML(true);
-    $mail->Subject = $asuntoAdmin;
-    $mail->Body    = $bodyAdminHTML;
-    $mail->AltBody = $bodyAdminTXT;
+    $mail->Subject = 'Gracias por contactarme, ' . $nombre;
+    $mail->Body    = "<h2>¡Hola {$nombre}!</h2>
+                    <p>Gracias por escribirme. Pronto me pondré en contacto contigo.</p>
+                    ".($mensaje ? "<p><strong>Tu mensaje:</strong><br>".nl2br($mensaje)."</p>" : '');
+    $mail->AltBody = "Hola {$nombre}!\nGracias por escribirme. Pronto me pondré en contacto contigo."
+                . ($mensaje ? "\n\nTu mensaje:\n{$mensaje}" : '');
+
     $mail->send();
 
-    /* 2) Auto‑reply al usuario (opcional) */
-    if ($MAIL_SEND_AUTOREPLY && $correo) {
-        $mail->clearAllRecipients();
-        $mail->clearAttachments();
-
-        $mail->addAddress($correo, $nombre . ' ' . $apellido);
-        // Remitente se mantiene como tu cuenta autenticada
-        $mail->Subject = $asuntoUser;
-        $mail->Body    = $bodyUserHTML;
-        $mail->AltBody = $bodyUserTXT;
-        $mail->send();
-    }
-
-    echo "<h2>¡Formulario enviado correctamente! ✅</h2>"
-    . "<p>Gracias, {$nombre}. Te responderé a la brevedad.</p>"
-    . "<p><a href='index.php'>Volver al formulario</a></p>";
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode(['ok' => true, 'message' => '¡Enviado con éxito! Gracias por contactarme.'], JSON_UNESCAPED_UNICODE);
 
 } catch (Exception $e) {
     http_response_code(500);
-    echo "El mensaje no pudo ser enviado. Error: " . $mail->ErrorInfo;
+    header('Content-Type: application/json; charset=UTF-8');
+    echo json_encode([
+        'ok' => false,
+        'errors' => ['El mensaje no pudo ser enviado. ' . $mail->ErrorInfo]
+    ], JSON_UNESCAPED_UNICODE);
 }
